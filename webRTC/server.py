@@ -5,10 +5,10 @@ import logging
 import os
 import cv2
 import numpy as np
-import pyzed.sl as sl
 from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
+from camera import camera_instance
 
 
 # --- ZED 摄像头处理类 ---
@@ -18,72 +18,24 @@ class ZedCameraTrack(VideoStreamTrack):
     输出格式为 Side-by-Side (SBS) 视频，适合 VR 显示。
     """
 
-    _zed = None
-    _lock = None  # 延迟初始化锁
-
     def __init__(self):
         super().__init__()
-        self.mat_left = sl.Mat()
-        self.mat_right = sl.Mat()
-        self.runtime_parameters = sl.RuntimeParameters()
-
-    @classmethod
-    async def get_lock(cls):
-        if cls._lock is None:
-            cls._lock = asyncio.Lock()
-        return cls._lock
-
-    async def _ensure_zed_opened(self):
-        lock = await self.get_lock()
-        async with lock:
-            if ZedCameraTrack._zed is None:
-                zed = sl.Camera()
-                init_params = sl.InitParameters()
-                init_params.camera_resolution = sl.RESOLUTION.HD720
-                init_params.camera_fps = 30
-                init_params.depth_mode = sl.DEPTH_MODE.NONE
-
-                err = zed.open(init_params)
-                if err != sl.ERROR_CODE.SUCCESS:
-                    print(f"ZED Open Error: {err}")
-                    return False
-                ZedCameraTrack._zed = zed
-                print("ZED Camera opened")
-            return True
 
     async def recv(self):
         """
         WebRTC 会不断调用这个方法获取下一帧
         """
         try:
-            if not await self._ensure_zed_opened():
-                await asyncio.sleep(1)
+            frame_sbs = await camera_instance.get_frame_sbs()
+            if frame_sbs is None:
+                await asyncio.sleep(0.01)
                 return await self.recv()
 
             pts, time_base = await self.next_timestamp()
-
-            # 使用锁确保 grab() 不会被并发调用
-            lock = await self.get_lock()
-            async with lock:
-                err = ZedCameraTrack._zed.grab(self.runtime_parameters)
-                if err == sl.ERROR_CODE.SUCCESS:
-                    ZedCameraTrack._zed.retrieve_image(self.mat_left, sl.VIEW.LEFT)
-                    ZedCameraTrack._zed.retrieve_image(self.mat_right, sl.VIEW.RIGHT)
-
-                    img_left = self.mat_left.get_data()
-                    img_right = self.mat_right.get_data()
-
-                    # 拼接 SBS 格式
-                    frame_sbs = np.hstack((img_left[:, :, :3], img_right[:, :, :3]))
-
-                    new_frame = VideoFrame.from_ndarray(frame_sbs, format="bgr24")
-                    new_frame.pts = pts
-                    new_frame.time_base = time_base
-                    return new_frame
-                else:
-                    # print(f"ZED Grab Error: {err}")
-                    await asyncio.sleep(0.01)
-                    return await self.recv()
+            new_frame = VideoFrame.from_ndarray(frame_sbs, format="bgr24")
+            new_frame.pts = pts
+            new_frame.time_base = time_base
+            return new_frame
         except Exception as e:
             print(f"Error in ZedCameraTrack.recv: {e}")
             raise e
@@ -173,10 +125,7 @@ async def on_shutdown(app):
     pcs.clear()
 
     # 关闭 ZED 相机
-    if ZedCameraTrack._zed is not None:
-        ZedCameraTrack._zed.close()
-        ZedCameraTrack._zed = None
-        print("ZED Camera closed on shutdown")
+    camera_instance.close()
 
 
 if __name__ == "__main__":
