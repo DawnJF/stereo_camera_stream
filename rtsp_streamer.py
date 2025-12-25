@@ -162,8 +162,8 @@ cd /home/mjf/code/media_server
 运行本脚本，推流到本地 mediamtx 服务器
 
 3.
-ffplay -rtsp_transport tcp rtsp://127.0.0.1:8554/mystream
-ffplay -fflags nobuffer -flags low_delay -framedrop -rtsp_transport udp rtsp://127.0.0.1:8554/mystream
+ffplay -rtsp_transport tcp rtsp://127.0.0.1:8554/stream
+ffplay -fflags nobuffer -flags low_delay -framedrop -rtsp_transport udp rtsp://127.0.0.1:8554/stream
 """
 
 if __name__ == "__main__":
@@ -172,7 +172,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ZED RTSP Server (Listen Mode)")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to listen on")
     parser.add_argument("--port", type=str, default="8554", help="Port to listen on")
-    parser.add_argument("--path", type=str, default="mystream", help="RTSP path")
+    parser.add_argument("--path", type=str, default="stream", help="RTSP path")
     args = parser.parse_args()
 
     try:

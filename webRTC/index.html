@@ -23,21 +23,29 @@
             /* 保持比例 */
         }
 
-        button {
+        .controls {
             position: absolute;
             top: 20px;
             left: 20px;
             z-index: 10;
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
             padding: 10px 20px;
             font-size: 16px;
+            cursor: pointer;
         }
     </style>
 </head>
 
 <body>
 
-    <button id="start" onclick="start()">Start VR Stream</button>
-    <button id="xr-button" style="display: none;" onclick="onXRButtonClicked()">Enter VR</button>
+    <div class="controls">
+        <button id="start" onclick="start()">Start Stream</button>
+        <button id="xr-button" onclick="onXRButtonClicked()">Enter VR</button>
+    </div>
 
     <div id="debug"
         style="position: absolute; bottom: 10px; left: 10px; color: white; font-family: monospace; background: rgba(0,0,0,0.5); z-index: 100; pointer-events: none;">
@@ -68,22 +76,15 @@
         if (navigator.xr) {
             navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
                 log("Immersive-VR supported: " + supported);
-                if (supported) {
-                    xrButton.style.display = 'block';
-                } else {
-                    // 即使不支持也尝试显示，方便调试
-                    xrButton.style.display = 'block';
-                    xrButton.textContent = 'Enter VR (Unsupported?)';
+                if (!supported) {
+                    xrButton.textContent = 'Enter VR (Unsupported)';
                 }
             }).catch(err => {
                 log("Error checking support: " + err);
-                xrButton.style.display = 'block';
-                xrButton.textContent = 'Enter VR (Error Check)';
+                xrButton.textContent = 'Enter VR (Error)';
             });
         } else {
             log("WebXR not found. Use HTTPS or localhost.");
-            // 强制显示按钮以便用户点击查看错误
-            xrButton.style.display = 'block';
             xrButton.textContent = 'Enter VR (No WebXR)';
         }
 
@@ -97,11 +98,15 @@
 
             // 当接收到远端轨道时
             pc.ontrack = function (evt) {
-                console.log('收到视频轨道:', evt.track.kind);
+                log('收到视频轨道: ' + evt.track.kind);
                 if (evt.track.kind == 'video') {
-                    // 更加健壮的写法：直接使用 track 创建 MediaStream
                     var stream = new MediaStream([evt.track]);
-                    document.getElementById('video').srcObject = stream;
+                    video.srcObject = stream;
+                    video.play().then(() => {
+                        log("Video playback started");
+                    }).catch(err => {
+                        log("Video playback failed: " + err);
+                    });
                 }
             };
 
@@ -163,6 +168,10 @@
         var xrRefSpace = null;
 
         async function onXRButtonClicked() {
+            if (!navigator.xr) {
+                alert("WebXR not supported or not in a secure context (HTTPS).");
+                return;
+            }
             if (!xrSession) {
                 // 确保 WebRTC 已启动
                 start();
@@ -258,6 +267,11 @@
                 if (video.readyState >= video.HAVE_CURRENT_DATA) {
                     gl.bindTexture(gl.TEXTURE_2D, texture);
                     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+                } else {
+                    // 如果没有数据，可以在这里打印一下状态，但不要每帧都打印
+                    if (time % 1000 < 20) {
+                        console.log("Video not ready: " + video.readyState);
+                    }
                 }
 
                 for (let view of pose.views) {

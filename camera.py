@@ -5,6 +5,7 @@ import logging
 
 logger = logging.getLogger("camera")
 
+
 class ZedCamera:
     _instance = None
     _lock = asyncio.Lock()
@@ -23,7 +24,7 @@ class ZedCamera:
         async with self._lock:
             if self._opened:
                 return True
-            
+
             self._zed = sl.Camera()
             init_params = sl.InitParameters()
             init_params.camera_resolution = sl.RESOLUTION.HD720
@@ -34,7 +35,7 @@ class ZedCamera:
             if err != sl.ERROR_CODE.SUCCESS:
                 logger.error(f"ZED Open Error: {err}")
                 return False
-            
+
             self._opened = True
             logger.info("ZED Camera opened")
             return True
@@ -68,5 +69,6 @@ class ZedCamera:
             self._zed.close()
             self._opened = False
             logger.info("ZED Camera closed")
+
 
 camera_instance = ZedCamera()

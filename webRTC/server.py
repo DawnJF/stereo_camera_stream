@@ -3,11 +3,15 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import cv2
 import numpy as np
+import ssl
 from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
+
+sys.path.append(os.getcwd())
 from camera import camera_instance
 
 
@@ -31,13 +35,24 @@ class ZedCameraTrack(VideoStreamTrack):
                 await asyncio.sleep(0.01)
                 return await self.recv()
 
+            # 统计并打印帧率信息
+            if not hasattr(self, "_frame_count"):
+                self._frame_count = 0
+            self._frame_count += 1
+            if self._frame_count % 100 == 0:
+                logging.info(
+                    f"Successfully sent 100 frames to WebRTC. Shape: {frame_sbs.shape}"
+                )
+
             pts, time_base = await self.next_timestamp()
             new_frame = VideoFrame.from_ndarray(frame_sbs, format="bgr24")
             new_frame.pts = pts
             new_frame.time_base = time_base
-            return new_frame
+
+            # 显式转换为 yuv420p，提高 WebRTC 兼容性
+            return new_frame.reformat(format="yuv420p")
         except Exception as e:
-            print(f"Error in ZedCameraTrack.recv: {e}")
+            logging.error(f"Error in ZedCameraTrack.recv: {e}")
             raise e
 
     def stop(self):
@@ -132,10 +147,42 @@ if __name__ == "__main__":
     # 配置日志
     logging.basicConfig(level=logging.INFO)
 
+    parser = argparse.ArgumentParser(description="WebRTC ZED Streamer")
+    parser.add_argument(
+        "--cert-file",
+        default="webRTC/cert.pem",
+        help="SSL certificate file (for HTTPS)",
+    )
+    parser.add_argument(
+        "--key-file", default="webRTC/key.pem", help="SSL key file (for HTTPS)"
+    )
+    parser.add_argument("--host", default="0.0.0.0", help="Host for HTTP server")
+    parser.add_argument("--port", type=int, default=8080, help="Port for HTTP server")
+    args = parser.parse_args()
+
     app = web.Application()
     app.on_shutdown.append(on_shutdown)
     app.router.add_get("/", index)
     app.router.add_post("/offer", offer)
 
-    print("Server started at http://localhost:8080")
-    web.run_app(app, host="0.0.0.0", port=8080)
+    if args.cert_file and args.key_file:
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.load_cert_chain(args.cert_file, args.key_file)
+    else:
+        ssl_context = None
+        print("Warning: Running without HTTPS. WebXR will only work on localhost.")
+
+    if ssl_context:
+        print(f"Server started at https://{args.host}:{args.port}")
+    else:
+        print(f"Server started at http://{args.host}:{args.port}")
+
+    web.run_app(app, host=args.host, port=args.port, ssl_context=ssl_context)
+
+
+"""
+
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
+
+python webRTC/server.py
+"""
