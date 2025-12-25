@@ -37,16 +37,60 @@
 <body>
 
     <button id="start" onclick="start()">Start VR Stream</button>
+    <button id="xr-button" style="display: none;" onclick="onXRButtonClicked()">Enter VR</button>
 
-    <video id="video" autoplay playsinline muted controls></video>
+    <div id="debug"
+        style="position: absolute; bottom: 10px; left: 10px; color: white; font-family: monospace; background: rgba(0,0,0,0.5); z-index: 100; pointer-events: none;">
+    </div>
+
+    <video id="video" autoplay playsinline muted controls style="display: block;"></video>
 
     <script>
         var pc = null;
+        var video = document.getElementById('video');
+        var xrButton = document.getElementById('xr-button');
+        var debugDiv = document.getElementById('debug');
+        var xrSession = null;
+        var gl = null;
+        var programInfo = null;
+        var buffers = null;
+        var texture = null;
+
+        function log(msg) {
+            console.log(msg);
+            debugDiv.innerText += msg + '\n';
+        }
+
+        log("Secure Context: " + window.isSecureContext);
+        log("Navigator.xr: " + (!!navigator.xr));
+
+        // 检查 WebXR 支持
+        if (navigator.xr) {
+            navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
+                log("Immersive-VR supported: " + supported);
+                if (supported) {
+                    xrButton.style.display = 'block';
+                } else {
+                    // 即使不支持也尝试显示，方便调试
+                    xrButton.style.display = 'block';
+                    xrButton.textContent = 'Enter VR (Unsupported?)';
+                }
+            }).catch(err => {
+                log("Error checking support: " + err);
+                xrButton.style.display = 'block';
+                xrButton.textContent = 'Enter VR (Error Check)';
+            });
+        } else {
+            log("WebXR not found. Use HTTPS or localhost.");
+            // 强制显示按钮以便用户点击查看错误
+            xrButton.style.display = 'block';
+            xrButton.textContent = 'Enter VR (No WebXR)';
+        }
 
         function createPeerConnection() {
             var config = {
                 sdpSemantics: 'unified-plan',
-                iceServers: [{urls: ['stun:stun.l.google.com:19302']}]
+                iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
             };
 
             pc = new RTCPeerConnection(config);
@@ -61,7 +105,7 @@
                 }
             };
 
-            pc.oniceconnectionstatechange = function() {
+            pc.oniceconnectionstatechange = function () {
                 console.log('ICE 连接状态:', pc.iceConnectionState);
             };
         }
@@ -107,10 +151,200 @@
 
         function start() {
             document.getElementById('start').style.display = 'none';
-            createPeerConnection();
-            // 添加一个 Transceiver 只接收视频
-            pc.addTransceiver('video', { direction: 'recvonly' });
-            negotiate();
+            if (!pc) {
+                createPeerConnection();
+                pc.addTransceiver('video', { direction: 'recvonly' });
+                negotiate();
+            }
+        }
+
+        // --- WebXR Logic ---
+
+        var xrRefSpace = null;
+
+        async function onXRButtonClicked() {
+            if (!xrSession) {
+                // 确保 WebRTC 已启动
+                start();
+
+                try {
+                    const session = await navigator.xr.requestSession('immersive-vr', {
+                        optionalFeatures: ['local-floor', 'bounded-floor']
+                    });
+                    onSessionStarted(session);
+                } catch (e) {
+                    alert("Failed to start XR session: " + e);
+                }
+            } else {
+                xrSession.end();
+            }
+        }
+
+        async function onSessionStarted(session) {
+            xrSession = session;
+            xrButton.textContent = 'Exit VR';
+            session.addEventListener('end', onSessionEnded);
+
+            // 创建 WebGL 上下文
+            var canvas = document.createElement('canvas');
+            gl = canvas.getContext('webgl', { xrCompatible: true });
+
+            initWebGL();
+
+            session.updateRenderState({
+                baseLayer: new XRWebGLLayer(session, gl)
+            });
+
+            xrRefSpace = await session.requestReferenceSpace('local');
+            session.requestAnimationFrame(onXRFrame);
+        }
+
+        function onSessionEnded() {
+            xrSession = null;
+            xrButton.textContent = 'Enter VR';
+        }
+
+        function initWebGL() {
+            const vsSource = `
+                attribute vec2 aPosition;
+                attribute vec2 aTexCoord;
+                varying vec2 vTexCoord;
+                void main() {
+                    gl_Position = vec4(aPosition, 0.0, 1.0);
+                    vTexCoord = aTexCoord;
+                }
+            `;
+            const fsSource = `
+                precision mediump float;
+                varying vec2 vTexCoord;
+                uniform sampler2D uSampler;
+                void main() {
+                    gl_FragColor = texture2D(uSampler, vTexCoord);
+                }
+            `;
+
+            const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
+            programInfo = {
+                program: shaderProgram,
+                attribLocations: {
+                    position: gl.getAttribLocation(shaderProgram, 'aPosition'),
+                    texCoord: gl.getAttribLocation(shaderProgram, 'aTexCoord'),
+                },
+                uniformLocations: {
+                    uSampler: gl.getUniformLocation(shaderProgram, 'uSampler'),
+                },
+            };
+
+            buffers = initBuffers(gl);
+            texture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        }
+
+        function onXRFrame(time, frame) {
+            let session = frame.session;
+            session.requestAnimationFrame(onXRFrame);
+
+            let pose = frame.getViewerPose(xrRefSpace);
+            if (pose) {
+                let layer = session.renderState.baseLayer;
+                gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+                gl.clearColor(0, 0, 0, 1);
+                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+                // 更新纹理
+                if (video.readyState >= video.HAVE_CURRENT_DATA) {
+                    gl.bindTexture(gl.TEXTURE_2D, texture);
+                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+                }
+
+                for (let view of pose.views) {
+                    let viewport = layer.getViewport(view);
+                    gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+
+                    // 根据眼睛选择 SBS 的一半
+                    // view.eye 是 'left' 或 'right'
+                    drawScene(view.eye);
+                }
+            }
+        }
+
+        function drawScene(eye) {
+            gl.useProgram(programInfo.program);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+            gl.vertexAttribPointer(programInfo.attribLocations.position, 2, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(programInfo.attribLocations.position);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffers.texCoord);
+            // 根据眼睛调整纹理坐标
+            let texCoords;
+            if (eye === 'left') {
+                texCoords = new Float32Array([
+                    0.0, 0.0,
+                    0.5, 0.0,
+                    0.0, 1.0,
+                    0.5, 1.0,
+                ]);
+            } else {
+                texCoords = new Float32Array([
+                    0.5, 0.0,
+                    1.0, 0.0,
+                    0.5, 1.0,
+                    1.0, 1.0,
+                ]);
+            }
+            gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+
+            gl.vertexAttribPointer(programInfo.attribLocations.texCoord, 2, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(programInfo.attribLocations.texCoord);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.uniform1i(programInfo.uniformLocations.uSampler, 0);
+
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        }
+
+        function initBuffers(gl) {
+            const positionBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            const positions = [
+                -1.0, 1.0,
+                1.0, 1.0,
+                -1.0, -1.0,
+                1.0, -1.0,
+            ];
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+            const texCoordBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+            // 初始值，后面会根据眼睛更新
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(8), gl.STATIC_DRAW);
+
+            return {
+                position: positionBuffer,
+                texCoord: texCoordBuffer,
+            };
+        }
+
+        function initShaderProgram(gl, vsSource, fsSource) {
+            const vertexShader = loadShader(gl, gl.VERTEX_SHADER, vsSource);
+            const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fsSource);
+            const shaderProgram = gl.createProgram();
+            gl.attachShader(shaderProgram, vertexShader);
+            gl.attachShader(shaderProgram, fragmentShader);
+            gl.linkProgram(shaderProgram);
+            return shaderProgram;
+        }
+
+        function loadShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            return shader;
         }
     </script>
 </body>
