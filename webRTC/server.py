@@ -72,6 +72,12 @@ async def index(request):
     return web.Response(content_type="text/html", text=content)
 
 
+async def babylon(request):
+    with open(os.path.join(ROOT, "babylon_xr.html"), "r", encoding="utf-8") as f:
+        content = f.read()
+    return web.Response(content_type="text/html", text=content)
+
+
 async def offer(request):
     params = await request.json()
     offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
@@ -163,6 +169,7 @@ if __name__ == "__main__":
     app = web.Application()
     app.on_shutdown.append(on_shutdown)
     app.router.add_get("/", index)
+    app.router.add_get("/babylon", babylon)
     app.router.add_post("/offer", offer)
 
     if args.cert_file and args.key_file:

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Babylon.js WebXR Stereo Stream</title>
+    <!-- Load Babylon.js -->
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+    <style>
+        html,
+        body {
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+        }
+
+        #renderCanvas {
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+
+        #ui-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            cursor: pointer;
+            background: #333;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 4px;
+        }
+
+        button:hover {
+            background: #444;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="ui-container">
+        <button id="startBtn">Start Stream</button>
+    </div>
+
+    <!-- Hidden video element for WebRTC stream -->
+    <video id="video" autoplay playsinline muted style="display: none;"></video>
+
+    <canvas id="renderCanvas"></canvas>
+
+    <script>
+        // --- WebRTC Logic (Copied & Adapted from index.html) ---
+        var pc = null;
+        var video = document.getElementById('video');
+
+        function createPeerConnection() {
+            var config = {
+                sdpSemantics: 'unified-plan',
+                iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
+            };
+
+            pc = new RTCPeerConnection(config);
+
+            pc.ontrack = function (evt) {
+                console.log('Received track:', evt.track.kind);
+                if (evt.track.kind == 'video') {
+                    var stream = new MediaStream([evt.track]);
+                    video.srcObject = stream;
+                    video.play().then(() => {
+                        console.log("Video playback started");
+                    }).catch(err => {
+                        console.error("Video playback failed:", err);
+                    });
+                }
+            };
+        }
+
+        function negotiate() {
+            return pc.createOffer().then(function (offer) {
+                return pc.setLocalDescription(offer);
+            }).then(function () {
+                return new Promise(function (resolve) {
+                    if (pc.iceGatheringState === 'complete') {
+                        resolve();
+                    } else {
+                        function checkState() {
+                            if (pc.iceGatheringState === 'complete') {
+                                pc.removeEventListener('icegatheringstatechange', checkState);
+                                resolve();
+                            }
+                        }
+                        pc.addEventListener('icegatheringstatechange', checkState);
+                    }
+                });
+            }).then(function () {
+                var offer = pc.localDescription;
+                return fetch('/offer', {
+                    body: JSON.stringify({
+                        sdp: offer.sdp,
+                        type: offer.type,
+                    }),
+                    headers: { 'Content-Type': 'application/json' },
+                    method: 'POST'
+                });
+            }).then(function (response) {
+                return response.json();
+            }).then(function (answer) {
+                return pc.setRemoteDescription(answer);
+            }).catch(function (e) {
+                alert(e);
+            });
+        }
+
+        function startWebRTC() {
+            if (!pc) {
+                createPeerConnection();
+                pc.addTransceiver('video', { direction: 'recvonly' });
+                negotiate();
+            }
+        }
+
+        // --- Babylon.js Logic ---
+        const canvas = document.getElementById("renderCanvas");
+        const engine = new BABYLON.Engine(canvas, true);
+
+        const createScene = async function () {
+            const scene = new BABYLON.Scene(engine);
+            scene.clearColor = new BABYLON.Color4(0, 0, 0, 1);
+
+            // Basic camera for non-VR view
+            const camera = new BABYLON.ArcRotateCamera("Camera", -Math.PI / 2, Math.PI / 2, 5, BABYLON.Vector3.Zero(), scene);
+            camera.attachControl(canvas, true);
+
+            // Light
+            const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
+
+            // --- 模式选择：平面模式 (Plane Mode) ---
+            // 如果你想用球形/半球形，请参考下面的注释掉的 VideoDome 代码
+
+            // 1. 创建视频纹理
+            const videoTexture = new BABYLON.VideoTexture("videoTexture", video, scene, true);
+            videoTexture.uScale = 0.5; // SBS 模式：每只眼只看一半宽度 (0.5)
+
+            // 2. 创建平面网格 (16:9 比例)
+            const plane = BABYLON.MeshBuilder.CreatePlane("videoPlane", { width: 4, height: 2.25 }, scene);
+
+            // --- 悬空模式 ---
+            // plane.rotation.set(0, 1.5, 4)
+
+            // --- 固定到屏幕 (HUD 模式) ---
+            // 让平面始终跟随相机移动，像贴在屏幕上一样
+            scene.onBeforeRenderObservable.add(() => {
+                if (plane.parent !== scene.activeCamera) {
+                    plane.parent = scene.activeCamera;
+                    // position.z 是距离眼睛的距离。
+                    // 如果想让屏幕更大，可以减小 z (如 2) 或者增大 width/height
+                    plane.position.set(0, 0, 4);
+                    plane.rotation.set(0, 0, 0);
+                }
+            });
+
+            const mat = new BABYLON.StandardMaterial("videoMat", scene);
+            mat.diffuseTexture = videoTexture;
+            mat.emissiveColor = new BABYLON.Color3(1, 1, 1); // 自发光，保持原色
+            mat.disableLighting = true; // 禁用光照计算，提高性能
+            mat.backFaceCulling = false;
+            plane.material = mat;
+
+            // 3. 核心逻辑：根据当前渲染的眼睛切换纹理偏移 (SBS 切换)
+            scene.onBeforeCameraRenderObservable.add((camera) => {
+                if (camera.isLeftCamera) {
+                    videoTexture.uOffset = 0;    // 左眼看左半部分
+                } else if (camera.isRightCamera) {
+                    videoTexture.uOffset = 0.5;  // 右眼看右半部分
+                } else {
+                    videoTexture.uOffset = 0;    // 普通预览看左眼
+                }
+            });
+
+            /* 
+            // --- 备选：VideoDome 模式 (球形/半球形) ---
+            const videoDome = new BABYLON.VideoDome(
+                "videoDome",
+                video,
+                {
+                    resolution: 32,
+                    clickToPlay: false,
+                    autoPlay: true,
+                    size: 1000,
+                    halfDome: true, // true 为半球, false 为全球
+                    videoMode: BABYLON.VideoDome.MODE_SIDEBYSIDE
+                },
+                scene
+            );
+            */
+
+            // Initialize WebXR
+            // This adds the VR button automatically
+            try {
+                const xr = await scene.createDefaultXRExperienceAsync({
+                    uiOptions: {
+                        sessionMode: "immersive-vr",
+                    },
+                    optionalFeatures: true
+                });
+
+                console.log("WebXR initialized");
+            } catch (e) {
+                console.log("WebXR not supported or error:", e);
+            }
+
+            return scene;
+        };
+
+        // Start logic
+        document.getElementById('startBtn').addEventListener('click', async () => {
+            document.getElementById('startBtn').style.display = 'none';
+
+            // 1. Start WebRTC
+            startWebRTC();
+
+            // 2. Initialize Babylon Scene
+            const scene = await createScene();
+
+            engine.runRenderLoop(function () {
+                scene.render();
+            });
+
+            window.addEventListener("resize", function () {
+                engine.resize();
+            });
+        });
+
+    </script>
+</body>
+
+</html>
