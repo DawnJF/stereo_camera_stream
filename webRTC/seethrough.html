@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Babylon.js AR Seethrough Stream</title>
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <style>
+        html,
+        body {
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        #renderCanvas {
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+
+        #ui-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            cursor: pointer;
+            background: #333;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="ui-container">
+        <button id="startBtn">Start AR Stream</button>
+    </div>
+
+    <video id="video" autoplay playsinline muted style="display: none;"></video>
+    <canvas id="renderCanvas"></canvas>
+
+    <script>
+        var pc = null;
+        var video = document.getElementById('video');
+
+        function createPeerConnection() {
+            var config = {
+                sdpSemantics: 'unified-plan',
+                iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
+            };
+            pc = new RTCPeerConnection(config);
+            pc.ontrack = function (evt) {
+                if (evt.track.kind == 'video') {
+                    video.srcObject = new MediaStream([evt.track]);
+                    video.play();
+                }
+            };
+        }
+
+        function negotiate() {
+            return pc.createOffer().then(offer => pc.setLocalDescription(offer))
+                .then(() => {
+                    return new Promise(resolve => {
+                        if (pc.iceGatheringState === 'complete') resolve();
+                        else {
+                            function check() {
+                                if (pc.iceGatheringState === 'complete') {
+                                    pc.removeEventListener('icegatheringstatechange', check);
+                                    resolve();
+                                }
+                            }
+                            pc.addEventListener('icegatheringstatechange', check);
+                        }
+                    });
+                })
+                .then(() => {
+                    return fetch('/offer', {
+                        body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type }),
+                        headers: { 'Content-Type': 'application/json' },
+                        method: 'POST'
+                    });
+                })
+                .then(resp => resp.json())
+                .then(answer => pc.setRemoteDescription(answer));
+        }
+
+        const canvas = document.getElementById("renderCanvas");
+        const engine = new BABYLON.Engine(canvas, true);
+
+        const createScene = async function () {
+            const scene = new BABYLON.Scene(engine);
+            // AR 模式下背景通常需要透明
+            scene.clearColor = new BABYLON.Color4(0, 0, 0, 0);
+
+            const camera = new BABYLON.FreeCamera("camera1", new BABYLON.Vector3(0, 0, 0), scene);
+
+            const videoTexture = new BABYLON.VideoTexture("videoTexture", video, scene, true);
+            // 默认显示左半部分 (2D 模式)
+            videoTexture.uScale = 0.5;
+            videoTexture.uOffset = 0;
+
+            // 创建一个平面显示视频
+            const plane = BABYLON.MeshBuilder.CreatePlane("videoPlane", { width: 2, height: 1.125 }, scene);
+            const mat = new BABYLON.StandardMaterial("videoMat", scene);
+            mat.diffuseTexture = videoTexture;
+            mat.emissiveColor = new BABYLON.Color3(1, 1, 1);
+            mat.disableLighting = true;
+            mat.backFaceCulling = false;
+            plane.material = mat;
+
+            // 固定在相机前方 (HUD 效果)
+            scene.onBeforeRenderObservable.add(() => {
+                if (scene.activeCamera) {
+                    plane.parent = scene.activeCamera;
+                    plane.position.set(0, 0, 2.5); // 距离相机 2.5 米
+                    plane.rotation.set(0, 0, 0);
+                }
+            });
+
+            try {
+                const xr = await scene.createDefaultXRExperienceAsync({
+                    uiOptions: {
+                        sessionMode: "immersive-ar",
+                    }
+                });
+                console.log("AR initialized");
+            } catch (e) {
+                console.error("AR not supported:", e);
+            }
+
+            return scene;
+        };
+
+        document.getElementById('startBtn').addEventListener('click', async () => {
+            document.getElementById('startBtn').style.display = 'none';
+            createPeerConnection();
+            pc.addTransceiver('video', { direction: 'recvonly' });
+            await negotiate();
+            const scene = await createScene();
+            engine.runRenderLoop(() => scene.render());
+        });
+
+        window.addEventListener("resize", () => engine.resize());
+    </script>
+</body>
+
+</html>
