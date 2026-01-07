@@ -30,7 +30,7 @@ class ZedCameraTrack(VideoStreamTrack):
         WebRTC 会不断调用这个方法获取下一帧
         """
         try:
-            frame_sbs = await camera_instance.get_frame_sbs()
+            frame_sbs = await camera_instance.get_frame()
             if frame_sbs is None:
                 await asyncio.sleep(0.01)
                 return await self.recv()

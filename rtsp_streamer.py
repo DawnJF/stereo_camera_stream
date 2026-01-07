@@ -59,7 +59,7 @@ async def start_rtsp_stream(host, port, path):
         return
 
     # 获取第一帧以确定分辨率
-    frame = await camera_instance.get_frame_sbs()
+    frame = await camera_instance.get_frame()
     if frame is None:
         logger.error("Failed to get initial frame")
         return
@@ -134,7 +134,7 @@ async def start_rtsp_stream(host, port, path):
 
     try:
         while True:
-            frame = await camera_instance.get_frame_sbs()
+            frame = await camera_instance.get_frame()
             if frame is not None:
                 try:
                     process.stdin.write(frame.tobytes())
