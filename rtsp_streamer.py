@@ -2,7 +2,7 @@ import asyncio
 import subprocess
 import cv2
 import numpy as np
-from camera_source.zed_camera import camera_instance
+from camera_source.agent import camera
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -54,12 +54,12 @@ async def start_rtsp_stream(host, port, path):
     - 实际的 RTSP 监听和客户端连接由外部服务器（如 mediamtx）完成
     """
     # 等待摄像头打开
-    if not await camera_instance.open():
+    if not await camera.open():
         logger.error("Failed to open ZED camera")
         return
 
     # 获取第一帧以确定分辨率
-    frame = await camera_instance.get_frame()
+    frame = await camera.get_frame()
     if frame is None:
         logger.error("Failed to get initial frame")
         return
@@ -134,7 +134,7 @@ async def start_rtsp_stream(host, port, path):
 
     try:
         while True:
-            frame = await camera_instance.get_frame()
+            frame = await camera.get_frame()
             if frame is not None:
                 try:
                     process.stdin.write(frame.tobytes())
@@ -150,7 +150,7 @@ async def start_rtsp_stream(host, port, path):
             process.stdin.close()
         process.terminate()
         process.wait()
-        camera_instance.close()
+        camera.close()
 
 
 """

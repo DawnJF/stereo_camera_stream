@@ -12,16 +12,13 @@ from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
 
 sys.path.append(os.getcwd())
-from camera_source.zed_camera import camera_instance
-
-# from camera_source.v4l2_camera import camera_instance
+from camera_source.agent import camera
 
 
-# --- ZED 摄像头处理类 ---
-class ZedCameraTrack(VideoStreamTrack):
+# --- Camera 摄像头处理类 ---
+class CameraTrack(VideoStreamTrack):
     """
-    自定义 WebRTC 视频轨道，源数据来自 ZED 双目摄像头。
-    输出格式为 Side-by-Side (SBS) 视频，适合 VR 显示。
+    自定义 WebRTC 视频轨道，源数据来自摄像头，优先处理 YUV 格式
     """
 
     def __init__(self):
@@ -30,10 +27,11 @@ class ZedCameraTrack(VideoStreamTrack):
     async def recv(self):
         """
         WebRTC 会不断调用这个方法获取下一帧
+        优先处理 YUV NV12 格式以提高性能
         """
         try:
-            frame_sbs = await camera_instance.get_frame()
-            if frame_sbs is None:
+            frame = await camera.get_frame()
+            if frame is None:
                 await asyncio.sleep(0.01)
                 return await self.recv()
 
@@ -41,24 +39,67 @@ class ZedCameraTrack(VideoStreamTrack):
             if not hasattr(self, "_frame_count"):
                 self._frame_count = 0
             self._frame_count += 1
-            if self._frame_count % 100 == 0:
-                logging.info(
-                    f"Successfully sent 100 frames to WebRTC. Shape: {frame_sbs.shape}"
-                )
 
             pts, time_base = await self.next_timestamp()
-            new_frame = VideoFrame.from_ndarray(frame_sbs, format="bgr24")
-            new_frame.pts = pts
-            new_frame.time_base = time_base
 
-            # 显式转换为 yuv420p，提高 WebRTC 兼容性
-            return new_frame.reformat(format="yuv420p")
+            # 检查是否是 YUV 字典格式
+            if isinstance(frame, dict) and frame.get("format") == "nv12":
+                # 处理 YUV NV12 格式
+                y_plane = frame["y"]
+                uv_plane = frame["uv"]
+                width = frame["width"]
+                height = frame["height"]
+
+                if self._frame_count % 300 == 0:
+                    logging.info(
+                        f"Successfully sent 300 YUV frames to WebRTC. Size: {width}x{height}"
+                    )
+
+                # 从 NV12 平面创建 VideoFrame
+                # aiortc 的 VideoFrame.from_ndarray 需要完整的 YUV420p 格式
+                # NV12 需要转换为 I420 (planar YUV)
+
+                # 分离 UV 平面
+                # 注意：切片会生成 strided view（非 C-contiguous），PyAV 不接受。
+                y_plane = np.ascontiguousarray(y_plane)
+                u_plane = np.ascontiguousarray(uv_plane[:, 0:width:2])
+                v_plane = np.ascontiguousarray(uv_plane[:, 1:width:2])
+
+                # 使用 av 库直接创建 yuv420p VideoFrame
+                new_frame = VideoFrame(width=width, height=height, format="yuv420p")
+
+                # 填充数据
+                new_frame.planes[0].update(y_plane)
+                new_frame.planes[1].update(u_plane)
+                new_frame.planes[2].update(v_plane)
+
+                new_frame.pts = pts
+                new_frame.time_base = time_base
+
+                return new_frame
+            else:
+                # 处理传统 BGR/RGB numpy 数组格式
+                if self._frame_count % 100 == 0:
+                    logging.info(
+                        f"Successfully sent 100 BGR frames to WebRTC. Shape: {frame.shape}"
+                    )
+
+                # 从 BGR numpy 数组创建 VideoFrame
+                frame = np.ascontiguousarray(frame)
+                new_frame = VideoFrame.from_ndarray(frame, format="bgr24")
+                new_frame.pts = pts
+                new_frame.time_base = time_base
+
+                # 转换为 yuv420p 提高 WebRTC 兼容性
+                new_frame = new_frame.reformat(format="yuv420p")
+                return new_frame
+
         except Exception as e:
-            logging.error(f"Error in ZedCameraTrack.recv: {e}")
+            logging.error(f"Error in CameraTrack.recv: {e}")
             raise e
 
     def stop(self):
-        # 注意：这里不直接关闭全局 zed 实例，因为可能有其他轨道在使用
+        # 注意：这里不直接关闭全局 camera 实例，因为可能有其他轨道在使用
         # 可以在 app shutdown 时统一关闭
         super().stop()
 
@@ -93,12 +134,12 @@ async def offer(request):
     pc = RTCPeerConnection()
     pcs.add(pc)
 
-    # 添加 ZED 视频轨道
-    # 这里我们每次请求都创建一个新的 Track 实例，实际可能会共享同一个 ZED 实例
-    # 注意：ZED SDK 不允许多个进程同时由同一个对象打开，
-    # 如果要多客户端观看，需要设计一个单例模式的 ZED Grabber
-    zed_track = ZedCameraTrack()
-    pc.addTrack(zed_track)
+    # 添加摄像头视频轨道
+    # 这里我们每次请求都创建一个新的 Track 实例，实际可能会共享同一个摄像头实例
+    # 注意：某些 SDK（如 ZED）不允许多个进程同时由同一个对象打开，
+    # 如果要多客户端观看，需要设计一个单例模式的帧获取器
+    camera_track = CameraTrack()
+    pc.addTrack(camera_track)
 
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
@@ -106,9 +147,9 @@ async def offer(request):
         if pc.connectionState == "failed":
             await pc.close()
             pcs.discard(pc)
-            zed_track.stop()
+            camera_track.stop()
         elif pc.connectionState == "closed":
-            zed_track.stop()
+            camera_track.stop()
 
     @pc.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
@@ -154,14 +195,14 @@ async def on_shutdown(app):
     pcs.clear()
 
     # 关闭 ZED 相机
-    camera_instance.close()
+    camera.close()
 
 
 if __name__ == "__main__":
     # 配置日志
     logging.basicConfig(level=logging.INFO)
 
-    parser = argparse.ArgumentParser(description="WebRTC ZED Streamer")
+    parser = argparse.ArgumentParser(description="WebRTC Camera Streamer")
     parser.add_argument(
         "--cert-file",
         default="webRTC/cert.pem",

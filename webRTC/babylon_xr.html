@@ -58,6 +58,9 @@
     <canvas id="renderCanvas"></canvas>
 
     <script>
+        // --- 配置参数 ---
+        const ENABLE_SBS = false; // SBS 开关：true=开启SBS模式, false=关闭SBS模式
+
         // --- WebRTC Logic (Copied & Adapted from index.html) ---
         var pc = null;
         var video = document.getElementById('video');
@@ -148,7 +151,7 @@
 
             // 1. 创建视频纹理
             const videoTexture = new BABYLON.VideoTexture("videoTexture", video, scene, true);
-            videoTexture.uScale = 0.5; // SBS 模式：每只眼只看一半宽度 (0.5)
+            videoTexture.uScale = ENABLE_SBS ? 0.5 : 1.0; // SBS 模式：每只眼只看一半宽度 (0.5), 普通模式：完整视频 (1.0)
 
             // 2. 创建平面网格 (16:9 比例)
             const plane = BABYLON.MeshBuilder.CreatePlane("videoPlane", { width: 4, height: 2.25 }, scene);
@@ -176,15 +179,19 @@
             plane.material = mat;
 
             // 3. 核心逻辑：根据当前渲染的眼睛切换纹理偏移 (SBS 切换)
-            scene.onBeforeCameraRenderObservable.add((camera) => {
-                if (camera.isLeftCamera) {
-                    videoTexture.uOffset = 0;    // 左眼看左半部分
-                } else if (camera.isRightCamera) {
-                    videoTexture.uOffset = 0.5;  // 右眼看右半部分
-                } else {
-                    videoTexture.uOffset = 0;    // 普通预览看左眼
-                }
-            });
+            if (ENABLE_SBS) {
+                scene.onBeforeCameraRenderObservable.add((camera) => {
+                    if (camera.isLeftCamera) {
+                        videoTexture.uOffset = 0;    // 左眼看左半部分
+                    } else if (camera.isRightCamera) {
+                        videoTexture.uOffset = 0.5;  // 右眼看右半部分
+                    } else {
+                        videoTexture.uOffset = 0;    // 普通预览看左眼
+                    }
+                });
+            } else {
+                videoTexture.uOffset = 0; // 普通模式，不偏移
+            }
 
             /* 
             // --- 备选：VideoDome 模式 (球形/半球形) ---
