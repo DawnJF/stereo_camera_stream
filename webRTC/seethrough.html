@@ -49,6 +49,9 @@
     <canvas id="renderCanvas"></canvas>
 
     <script>
+        // --- 配置参数 ---
+        const ENABLE_SBS = false; // SBS 开关：true=开启SBS模式, false=关闭SBS模式
+
         var pc = null;
         var video = document.getElementById('video');
 
@@ -104,9 +107,9 @@
             const camera = new BABYLON.FreeCamera("camera1", new BABYLON.Vector3(0, 0, 0), scene);
 
             const videoTexture = new BABYLON.VideoTexture("videoTexture", video, scene, true);
-            // 默认显示左半部分 (2D 模式)
-            videoTexture.uScale = 0.5;
-            videoTexture.uOffset = 0;
+            // 根据 SBS 开关设置纹理缩放
+            videoTexture.uScale = ENABLE_SBS ? 0.5 : 1.0; // SBS 模式：0.5，普通模式：1.0
+            videoTexture.uOffset = ENABLE_SBS ? 0 : 0;    // SBS 模式显示左半部分，普通模式不偏移
 
             // 创建一个平面显示视频
             const plane = BABYLON.MeshBuilder.CreatePlane("videoPlane", { width: 2, height: 1.125 }, scene);
