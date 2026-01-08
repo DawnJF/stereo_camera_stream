@@ -12,7 +12,9 @@ from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
 
 sys.path.append(os.getcwd())
-from camera import camera_instance
+from camera_source.zed_camera import camera_instance
+
+# from camera_source.v4l2_camera import camera_instance
 
 
 # --- ZED 摄像头处理类 ---

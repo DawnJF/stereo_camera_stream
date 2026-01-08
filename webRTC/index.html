@@ -178,7 +178,7 @@
 
                 try {
                     const session = await navigator.xr.requestSession('immersive-vr', {
-                        optionalFeatures: ['local-floor', 'bounded-floor']
+                        optionalFeatures: ['local-floor']
                     });
                     onSessionStarted(session);
                 } catch (e) {

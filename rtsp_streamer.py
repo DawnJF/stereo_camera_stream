@@ -2,7 +2,7 @@ import asyncio
 import subprocess
 import cv2
 import numpy as np
-from camera import camera_instance
+from camera_source.zed_camera import camera_instance
 import logging
 
 logging.basicConfig(level=logging.INFO)
