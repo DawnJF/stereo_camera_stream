@@ -51,7 +51,11 @@
     <script>
         // --- 配置参数 ---
         const ENABLE_SBS = false; // SBS 开关：true=开启SBS模式, false=关闭SBS模式
-        
+
+        // Signaling Mode: 'http' (direct to local server) or 'ws' (via relay server)
+        // This value is replaced by the server if needed, or defaults to 'http'
+        const SIGNALING_MODE = '{{SIGNALING_MODE}}';
+
         // Toggle Google STUN via URL param `useStun` (example: ?useStun=true)
         // 默认在局域网（不使用 Google STUN）
         const USE_GOOGLE_STUN = (new URLSearchParams(window.location.search).get('useStun') === 'true');
@@ -101,6 +105,55 @@
                 .then(answer => pc.setRemoteDescription(answer));
         }
 
+        function startWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+            const wsUrl = `${protocol}://${window.location.host}/ws`;
+            console.log("Connecting to WS:", wsUrl);
+            const ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log("WS Connected, registering as viewer");
+                ws.send(JSON.stringify({ type: "register", role: "viewer" }));
+                // Give it a moment to register, then start negotiation
+                setTimeout(initiateOffer, 500);
+            };
+
+            ws.onmessage = async (event) => {
+                const msg = JSON.parse(event.data);
+                console.log("WS Message:", msg.type);
+
+                if (msg.type === "answer") {
+                    await pc.setRemoteDescription(msg);
+                } else if (msg.type === "candidate") {
+                    if (msg.candidate) {
+                        try {
+                            await pc.addIceCandidate(msg.candidate);
+                        } catch (e) {
+                            console.error("Error adding candidate", e);
+                        }
+                    }
+                }
+            };
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    ws.send(JSON.stringify({
+                        type: "candidate",
+                        candidate: event.candidate
+                    }));
+                }
+            };
+
+            async function initiateOffer() {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                ws.send(JSON.stringify({
+                    type: "offer",
+                    sdp: pc.localDescription.sdp
+                }));
+            }
+        }
+
         const canvas = document.getElementById("renderCanvas");
         const engine = new BABYLON.Engine(canvas, true);
 
@@ -129,7 +182,7 @@
             scene.onBeforeRenderObservable.add(() => {
                 if (scene.activeCamera) {
                     plane.parent = scene.activeCamera;
-                    plane.position.set(0, 0, 2.5); // 距离相机 2.5 米
+                    plane.position.set(0, 0, 2.2); // 距离相机 2.2 米
                     plane.rotation.set(0, 0, 0);
                 }
             });
@@ -152,9 +205,17 @@
             document.getElementById('startBtn').style.display = 'none';
             createPeerConnection();
             pc.addTransceiver('video', { direction: 'recvonly' });
-            await negotiate();
-            const scene = await createScene();
-            engine.runRenderLoop(() => scene.render());
+
+            if (SIGNALING_MODE === 'ws') {
+                startWebSocket();
+                const scene = await createScene();
+                engine.runRenderLoop(() => scene.render());
+            } else {
+                // HTTP mode (default/local)
+                await negotiate();
+                const scene = await createScene();
+                engine.runRenderLoop(() => scene.render());
+            }
         });
 
         window.addEventListener("resize", () => engine.resize());
