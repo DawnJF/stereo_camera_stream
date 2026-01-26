@@ -5,7 +5,7 @@ You need to run three components:
    Run the server in relay mode. This serves the HTML page and handles the connection brokering.
    
    ```
-   python webRTC/server.py --mode relay 
+   python webRTC/server.py --mode relay 
    --host 0.0.0.0 --port 8080 --cert-file 
    webRTC/cert.pem --key-file webRTC/key.
    pem
@@ -15,7 +15,7 @@ You need to run three components:
    Run the new client script. This captures the camera and connects to your public server.
    
    ```
-   python webRTC/pc_client.py --server 
+   python webRTC/pc_client.py --server 
    wss://<YOUR_PUBLIC_SERVER_IP>:8080/ws
    ```
 3. On the Mobile Phone (Viewer) :

@@ -123,7 +123,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--server", default="ws://localhost:8080/ws", help="Signaling Server URL"
+        "--server", default="wss://127.0.0.1:8080/ws", help="Signaling Server URL"
     )
     args = parser.parse_args()
 
