@@ -242,4 +242,8 @@ if __name__ == "__main__":
 openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
 
 python webRTC/server.py
+
+https://0.0.0.0:8080/ar?useStun=false
+
+
 """

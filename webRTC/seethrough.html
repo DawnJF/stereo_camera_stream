@@ -51,15 +51,20 @@
     <script>
         // --- 配置参数 ---
         const ENABLE_SBS = false; // SBS 开关：true=开启SBS模式, false=关闭SBS模式
-
+        
+        // Toggle Google STUN via URL param `useStun` (example: ?useStun=true)
+        // 默认在局域网（不使用 Google STUN）
+        const USE_GOOGLE_STUN = (new URLSearchParams(window.location.search).get('useStun') === 'true');
         var pc = null;
         var video = document.getElementById('video');
 
         function createPeerConnection() {
+            var iceServers = USE_GOOGLE_STUN ? [{ urls: ['stun:stun.l.google.com:19302'] }] : [];
             var config = {
                 sdpSemantics: 'unified-plan',
-                iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
+                iceServers: iceServers
             };
+            console.log('PeerConnection iceServers:', iceServers.length ? 'Google STUN enabled' : 'LAN-only (no STUN)');
             pc = new RTCPeerConnection(config);
             pc.ontrack = function (evt) {
                 if (evt.track.kind == 'video') {
