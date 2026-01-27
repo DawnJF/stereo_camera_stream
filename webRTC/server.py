@@ -193,7 +193,7 @@ if __name__ == "__main__":
         "--key-file", default="webRTC/key.pem", help="SSL key file (for HTTPS)"
     )
     parser.add_argument("--host", default="0.0.0.0", help="Host for HTTP server")
-    parser.add_argument("--port", type=int, default=8080, help="Port for HTTP server")
+    parser.add_argument("--port", type=int, default=8182, help="Port for HTTP server")
     parser.add_argument(
         "--mode",
         default="local",
@@ -254,7 +254,13 @@ openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -node
 
 # local mode
 python webRTC/server.py
-https://127.0.0.1:8080/ar?useStun=false
+https://127.0.0.1:8182/ar?useStun=false
 
+# websocket relay mode
+python3 webRTC/server.py --mode relay
+
+python3 webRTC/pc_client.py --server wss://121.43.243.97:8182/ws
+
+https://121.43.243.97:8182/ar
 
 """
