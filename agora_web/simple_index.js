@@ -1,8 +1,8 @@
 const APP_ID = "5e881fdc469a4db1b05357c5665d2279";
 const CHANNEL = "123";
 const TOKEN = "007eJxTYJDZsMllXplRsevWs5+Psvw+J7+jTP73XaabqznrDYt2PNNQYDBNtbAwTEtJNjGzTDRJSTJMMjA1NjVPNjUzM00xMjK3TDGqyGwIZGQwul7EysgAgSA+M4OhkTEDAwBZtR5p";
-const UID = "robot";
-const PROXY_MODE = 5;
+const UID = null;
+const PROXY_MODE = 0;
 
 let client = null;
 let playingRemoteUid = null;
@@ -13,10 +13,12 @@ let localTracks = {
 
 function getConfig() {
   const params = new URLSearchParams(window.location.search);
-  const appId = params.get("appId") || APP_ID;
-  const channel = params.get("channel") || CHANNEL;
-  const token = params.get("token") ?? TOKEN;
-  const uid = params.get("uid") ?? UID;
+  const appId = (params.get("appId") || APP_ID).trim();
+  const channel = (params.get("channel") || CHANNEL).trim();
+  const tokenParam = params.get("token");
+  const token = tokenParam ? tokenParam.trim() : TOKEN;
+  const uidParam = params.get("uid");
+  const uid = uidParam ? uidParam.trim() : UID;
   const proxyModeRaw = params.get("proxyMode") ?? String(PROXY_MODE);
   const proxyMode = Number(proxyModeRaw);
   const codecParam = params.get("codec");
@@ -194,18 +196,6 @@ async function start() {
     setStatus("已加入频道，等待远端发布…");
   }
 
-  const existingRemoteUsers = client.remoteUsers || [];
-  appendLog(`当前已存在远端用户数：${existingRemoteUsers.length}`);
-  await Promise.all(
-    existingRemoteUsers
-      .filter((u) => u && u.hasVideo)
-      .map((u) =>
-        subscribeAndPlayRemote(u, "video").catch((e) => {
-          console.error(e);
-          appendLog(`订阅已存在远端失败：uid=${u?.uid} err=${e?.message || String(e)}`);
-        }),
-      ),
-  );
 }
 
 start().catch((err) => {
