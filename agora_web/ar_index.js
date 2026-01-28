@@ -2,7 +2,7 @@
 // --- Agora Config ---
 const APP_ID = "5e881fdc469a4db1b05357c5665d2279";
 const CHANNEL = "123";
-const TOKEN = "007eJxTYJDZsMllXplRsevWs5+Psvw+J7+jTP73XaabqznrDYt2PNNQYDBNtbAwTEtJNjGzTDRJSTJMMjA1NjVPNjUzM00xMjK3TDGqyGwIZGQwul7EysgAgSA+M4OhkTEDAwBZtR5p";
+const TOKEN = "007eJxTYFiZf+sOixNz4KVnLZO/JWu9mc6xMz7x+bu4bzHf3yc3uO5SYDBNtbAwTEtJNjGzTDRJSTJMMjA1NjVPNjUzM00xMjK3/HqqMrMhkJGhm7OSkZEBAkF8ZgZDI2MGBgDmLyCq";
 
 // --- Babylon Config ---
 const ENABLE_SBS = false; // SBS 开关：true=开启SBS模式, false=关闭SBS模式
