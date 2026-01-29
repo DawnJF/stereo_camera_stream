@@ -182,8 +182,8 @@
             scene.onBeforeRenderObservable.add(() => {
                 if (scene.activeCamera) {
                     plane.parent = scene.activeCamera;
-                    plane.position.set(0, 0, 2.2); // 距离相机 2.2 米
-                    plane.rotation.set(0, 0, 0);
+                    plane.position.set(0, 0, 1.3); // 距离相机 2.2 米
+                    plane.rotation.set(0, 0, Math.PI / 2);
                 }
             });
 
