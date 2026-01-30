@@ -6,6 +6,7 @@ const TOKEN = "007eJxTYFiZf+sOixNz4KVnLZO/JWu9mc6xMz7x+bu4bzHf3yc3uO5SYDBNtbAwTE
 
 // --- Babylon Config ---
 const ENABLE_SBS = false; // SBS 开关：true=开启SBS模式, false=关闭SBS模式
+const ENABLE_HAND_TRACKING = false; // 手部追踪开关：true=开启手部追踪, false=关闭手部追踪
 
 // --- Globals ---
 let client = null;
@@ -112,8 +113,8 @@ const createScene = async function () {
     scene.onBeforeRenderObservable.add(() => {
         if (scene.activeCamera) {
             plane.parent = scene.activeCamera;
-            plane.position.set(0, 0, 1.3); // 距离相机 2.2 米
-            plane.rotation.set(0, 0, -Math.PI / 2);
+            plane.position.set(0, -0.3, 1.3); // 距离相机 2.2 米
+            plane.rotation.set(Math.PI / 10, 0, Math.PI / 2);
         }
     });
 
@@ -123,6 +124,10 @@ const createScene = async function () {
                 sessionMode: "immersive-ar",
             }
         });
+        if (!ENABLE_HAND_TRACKING) {
+            const fm = xr.baseExperience.featuresManager;
+            fm.disableFeature(BABYLON.WebXRFeatureName.HAND_TRACKING);
+        }
         log("AR initialized");
     } catch (e) {
         log("AR not supported (or not in secure context/XR device): " + e);
