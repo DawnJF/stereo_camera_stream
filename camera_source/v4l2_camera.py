@@ -10,7 +10,7 @@ class V4L2Camera:
     _instance = None
     _lock = asyncio.Lock()
 
-    def __new__(cls, device="/dev/video4"):
+    def __new__(cls, device="/dev/video0"):
         if cls._instance is None:
             cls._instance = super(V4L2Camera, cls).__new__(cls)
             cls._instance._cap = None

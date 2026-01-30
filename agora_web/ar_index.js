@@ -34,7 +34,7 @@ function getConfig() {
     const uid = uidParam ? uidParam.trim() : null;
     const codecParam = params.get("codec");
     const codec = codecParam || "vp8";
-    
+
     return {
         appId,
         channel,
@@ -47,7 +47,7 @@ function getConfig() {
 async function startAgora() {
     const config = getConfig();
     log(`Initializing Agora... Channel: ${config.channel}`);
-    
+
     client = AgoraRTC.createClient({ mode: "rtc", codec: config.codec });
 
     client.on("user-published", async (user, mediaType) => {
@@ -58,7 +58,7 @@ async function startAgora() {
             const remoteVideoTrack = user.videoTrack;
             const mediaStreamTrack = remoteVideoTrack.getMediaStreamTrack();
             const mediaStream = new MediaStream([mediaStreamTrack]);
-            
+
             // Assign stream to the video element used by Babylon
             videoElement.srcObject = mediaStream;
             videoElement.play().catch(e => log("Video play error: " + e));
@@ -96,7 +96,7 @@ const createScene = async function () {
 
     const videoTexture = new BABYLON.VideoTexture("videoTexture", videoElement, scene, true);
     // 根据 SBS 开关设置纹理缩放
-    videoTexture.uScale = ENABLE_SBS ? 0.5 : 1.0; 
+    videoTexture.uScale = ENABLE_SBS ? 0.5 : 1.0;
     videoTexture.uOffset = 0;
 
     // 创建一个平面显示视频
@@ -113,7 +113,7 @@ const createScene = async function () {
         if (scene.activeCamera) {
             plane.parent = scene.activeCamera;
             plane.position.set(0, 0, 1.3); // 距离相机 2.2 米
-            plane.rotation.set(0, 0, Math.PI / 2);
+            plane.rotation.set(0, 0, -Math.PI / 2);
         }
     });
 
@@ -134,7 +134,7 @@ const createScene = async function () {
 // --- Main Entry ---
 document.getElementById('startBtn').addEventListener('click', async () => {
     document.getElementById('startBtn').style.display = 'none';
-    
+
     // Start Agora
     try {
         await startAgora();
