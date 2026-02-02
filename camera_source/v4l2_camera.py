@@ -31,23 +31,31 @@ class V4L2Camera:
                 self._cap = cv2.VideoCapture(self._device, cv2.CAP_V4L2)
                 if self._cap.isOpened():
                     # 尝试设置 YUV422 或 YUYV 格式
-                    self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('Y', 'U', 'Y', 'V'))
+                    self._cap.set(
+                        cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc("Y", "U", "Y", "V")
+                    )
                     self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._width)
                     self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._height)
                     self._cap.set(cv2.CAP_PROP_FPS, 30)
-                    
+
                     # 检查是否成功设置为 YUV
                     fourcc = int(self._cap.get(cv2.CAP_PROP_FOURCC))
-                    fourcc_str = "".join([chr((fourcc >> 8 * i) & 0xFF) for i in range(4)])
-                    
-                    if fourcc_str in ['YUYV', 'YUY2', 'UYVY']:
+                    fourcc_str = "".join(
+                        [chr((fourcc >> 8 * i) & 0xFF) for i in range(4)]
+                    )
+
+                    if fourcc_str in ["YUYV", "YUY2", "UYVY"]:
                         self._use_yuv = True
-                        logger.info(f"V4L2 Camera using native YUV format: {fourcc_str}")
+                        logger.info(
+                            f"V4L2 Camera using native YUV format: {fourcc_str}"
+                        )
                     else:
                         logger.info(f"V4L2 Camera fallback to BGR format: {fourcc_str}")
                         self._use_yuv = False
             except Exception as e:
-                logger.warning(f"Failed to open V4L2 with YUV, fallback to default: {e}")
+                logger.warning(
+                    f"Failed to open V4L2 with YUV, fallback to default: {e}"
+                )
                 self._cap = cv2.VideoCapture(self._device)
                 self._use_yuv = False
 
@@ -64,7 +72,9 @@ class V4L2Camera:
             self._height = actual_height
             self._opened = True
             logger.info(f"V4L2 Camera opened: {self._device}")
-            logger.info(f"V4L2 Camera format: {actual_width}x{actual_height} @ {actual_fps:.2f} fps")
+            logger.info(
+                f"V4L2 Camera format: {actual_width}x{actual_height} @ {actual_fps:.2f} fps"
+            )
             return True
 
     async def get_frame(self):
@@ -91,45 +101,47 @@ class V4L2Camera:
                 if w == self._width * 2:  # YUYV packed format
                     # 提取 Y 通道
                     y_plane = frame[:, 0::2].copy()
-                    
+
                     # 提取并下采样 U V 通道生成 NV12 格式
                     u = frame[::2, 1::4]
                     v = frame[::2, 3::4]
-                    uv_plane = np.empty((self._height // 2, self._width), dtype=np.uint8)
+                    uv_plane = np.empty(
+                        (self._height // 2, self._width), dtype=np.uint8
+                    )
                     uv_plane[:, 0::2] = u
                     uv_plane[:, 1::2] = v
-                    
+
                     return {
                         "y": y_plane,
                         "uv": uv_plane,
                         "width": self._width,
                         "height": self._height,
-                        "format": "nv12"
+                        "format": "nv12",
                     }
-            
+
             # 如果不是 YUV，将 BGR 转换为 YUV NV12
             if len(frame.shape) == 3 and frame.shape[2] == 3:
                 yuv = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420)
                 h, w = frame.shape[:2]
-                
+
                 # I420 格式: Y 平面 + U 平面 + V 平面
                 y_plane = yuv[:h, :].copy()
-                u_plane = yuv[h:h + h // 4, :].reshape(h // 2, w // 2)
-                v_plane = yuv[h + h // 4:, :].reshape(h // 2, w // 2)
-                
+                u_plane = yuv[h : h + h // 4, :].reshape(h // 2, w // 2)
+                v_plane = yuv[h + h // 4 :, :].reshape(h // 2, w // 2)
+
                 # 转换为 NV12 (交错 UV)
                 uv_plane = np.empty((h // 2, w), dtype=np.uint8)
                 uv_plane[:, 0::2] = u_plane
                 uv_plane[:, 1::2] = v_plane
-                
+
                 return {
                     "y": y_plane,
                     "uv": uv_plane,
                     "width": w,
                     "height": h,
-                    "format": "nv12"
+                    "format": "nv12",
                 }
-            
+
             return frame
 
     def close(self):
