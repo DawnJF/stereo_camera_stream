@@ -222,6 +222,7 @@ if __name__ == "__main__":
     app.router.add_get("/", index)
     app.router.add_get("/video", babylon)
     app.router.add_get("/ar", seethrough)
+    app.router.add_static("/vendor", os.path.join(ROOT, "vendor"))
 
     if args.mode == "local":
         app.router.add_post("/offer", offer)
