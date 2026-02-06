@@ -17,8 +17,8 @@ class V4L2Camera:
             cls._instance._opened = False
             cls._instance._device = device
             cls._instance._use_yuv = False
-            cls._instance._width = 1920
-            cls._instance._height = 1080
+            cls._instance._width = 320
+            cls._instance._height = 240
         return cls._instance
 
     async def open(self):
@@ -36,7 +36,7 @@ class V4L2Camera:
                     )
                     self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._width)
                     self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._height)
-                    self._cap.set(cv2.CAP_PROP_FPS, 30)
+                    self._cap.set(cv2.CAP_PROP_FPS, 60)
 
                     # 检查是否成功设置为 YUV
                     fourcc = int(self._cap.get(cv2.CAP_PROP_FOURCC))
