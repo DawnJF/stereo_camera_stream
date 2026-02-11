@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <meta charset="UTF-8">
     <title>Video Stream Test (No AR)</title>
     <style>
-        html, body {
+        html,
+        body {
             width: 100%;
             height: 100%;
             margin: 0;
@@ -16,11 +18,13 @@
             align-items: center;
             justify-content: center;
         }
+
         #video {
             max-width: 100%;
             max-height: 100%;
             background-color: #222;
         }
+
         #status {
             position: absolute;
             top: 10px;
@@ -31,6 +35,7 @@
         }
     </style>
 </head>
+
 <body>
     <div id="status">Status: Connecting...</div>
     <video id="video" autoplay playsinline muted controls></video>
@@ -41,6 +46,10 @@
         let pc = null;
         let ws = null;
         let candidateQueue = [];
+        let startRequested = false;
+        let wsAttempt = 0;
+        let wsConnectingAtMs = 0;
+        let wsConnectTimeoutId = null;
 
         function updateStatus(text) {
             statusDiv.textContent = 'Status: ' + text;
@@ -57,13 +66,13 @@
                 iceServers: iceServers
             };
             console.log('PeerConnection iceServers:', iceServers.length ? 'Google STUN enabled' : 'LAN-only (no STUN)');
-            
+
             pc = new RTCPeerConnection(config);
 
             // Add transceiver to ensure we receive video
-            pc.addTransceiver('video', {direction: 'recvonly'});
-            
-            pc.ontrack = function(evt) {
+            pc.addTransceiver('video', { direction: 'recvonly' });
+
+            pc.ontrack = function (evt) {
                 if (evt.track.kind == 'video') {
                     console.log('Got video track');
                     video.srcObject = new MediaStream([evt.track]);
@@ -79,35 +88,70 @@
                     }));
                 }
             };
-            
+
             pc.onconnectionstatechange = () => {
                 updateStatus('PC State: ' + pc.connectionState);
             };
         }
 
-        async function start() {
+        function ensurePeerConnection() {
+            if (pc) return;
             createPeerConnection();
-            
+        }
+
+        function connectWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
             const wsUrl = `${protocol}://${window.location.host}/ws`;
-            updateStatus('Connecting to WS: ' + wsUrl);
-            
-            ws = new WebSocket(wsUrl);
+            updateStatus('Connecting to WS: ' + wsUrl + ' focus=' + document.hasFocus() + ' vis=' + document.visibilityState);
+
+            if (ws) {
+                if (ws.readyState === WebSocket.OPEN) return;
+                if (ws.readyState === WebSocket.CONNECTING) {
+                    const ageMs = wsConnectingAtMs ? (performance.now() - wsConnectingAtMs) : 0;
+                    if (ageMs < 4000) return;
+                    try { ws.close(); } catch (_) { }
+                    ws = null;
+                }
+            }
+
+            const attemptId = ++wsAttempt;
+            const currentWs = new WebSocket(wsUrl);
+            ws = currentWs;
+            wsConnectingAtMs = performance.now();
+            if (wsConnectTimeoutId) clearTimeout(wsConnectTimeoutId);
+            wsConnectTimeoutId = setTimeout(() => {
+                if (ws !== currentWs) return;
+                if (currentWs.readyState !== WebSocket.CONNECTING) return;
+                updateStatus('WS Connect timeout, retrying' + ' attempt=' + attemptId);
+                try { currentWs.close(); } catch (_) { }
+                ws = null;
+                wsConnectTimeoutId = null;
+                connectWebSocket();
+            }, 4000);
 
             ws.onopen = () => {
-                updateStatus('WS Connected');
+                if (ws !== currentWs) return;
+                if (wsConnectTimeoutId) { clearTimeout(wsConnectTimeoutId); wsConnectTimeoutId = null; }
+                updateStatus('WS Connected' + ' focus=' + document.hasFocus() + ' vis=' + document.visibilityState);
                 ws.send(JSON.stringify({ type: "register", role: "viewer" }));
                 // Start negotiation after a short delay
                 setTimeout(initiateOffer, 500);
             };
 
+            ws.onerror = (event) => {
+                if (ws !== currentWs) return;
+                updateStatus('WS Error' + ' readyState=' + (ws ? ws.readyState : 'null'));
+                console.error('WS Error event:', event);
+            };
+
             ws.onmessage = async (event) => {
+                if (ws !== currentWs) return;
                 const msg = JSON.parse(event.data);
-                
+
                 if (msg.type === "answer") {
                     updateStatus('Received Answer');
                     await pc.setRemoteDescription(msg);
-                    
+
                     // Process queued candidates
                     while (candidateQueue.length > 0) {
                         const candidate = candidateQueue.shift();
@@ -135,10 +179,29 @@
                     }
                 }
             };
-            
-            ws.onclose = () => {
-                updateStatus('WS Closed');
+
+            ws.onclose = (event) => {
+                if (ws !== currentWs) return;
+                if (wsConnectTimeoutId) { clearTimeout(wsConnectTimeoutId); wsConnectTimeoutId = null; }
+                updateStatus('WS Closed' + ' code=' + event.code + ' reason=' + (event.reason || ''));
+                ws = null;
             };
+        }
+
+        async function start(reason) {
+            if (startRequested) return;
+            startRequested = true;
+            updateStatus('Start requested: ' + (reason || 'unknown') + ' focus=' + document.hasFocus() + ' vis=' + document.visibilityState);
+            ensurePeerConnection();
+            connectWebSocket();
+        }
+
+        function ensureConnected(reason) {
+            if (!pc) ensurePeerConnection();
+            if (!ws || ws.readyState === WebSocket.CLOSED) {
+                updateStatus('Reconnecting: ' + (reason || 'unknown') + ' focus=' + document.hasFocus() + ' vis=' + document.visibilityState);
+                connectWebSocket();
+            }
         }
 
         async function initiateOffer() {
@@ -158,7 +221,14 @@
         }
 
         // Start automatically
-        start();
+        start('auto');
+
+        window.addEventListener('focus', () => ensureConnected('focus'));
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') ensureConnected('visibilitychange');
+        });
+        window.addEventListener('pointerdown', () => ensureConnected('pointerdown'), { once: true });
     </script>
 </body>
+
 </html>

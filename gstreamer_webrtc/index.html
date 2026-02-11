@@ -62,6 +62,11 @@
         const USE_GOOGLE_STUN = (new URLSearchParams(window.location.search).get('useStun') === 'true');
         var pc = null;
         var video = document.getElementById('video');
+        var ws = null;
+        var candidateQueue = [];
+        var wsAttempt = 0;
+        var wsConnectingAtMs = 0;
+        var wsConnectTimeoutId = null;
 
         function createPeerConnection() {
             var iceServers = USE_GOOGLE_STUN ? [{ urls: ['stun:stun.l.google.com:19302'] }] : [];
@@ -106,27 +111,80 @@
                 .then(answer => pc.setRemoteDescription(answer));
         }
 
-        function startWebSocket() {
+        function connectWebSocket() {
+            if (!pc) return;
             const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
             const wsUrl = `${protocol}://${window.location.host}/ws`;
-            console.log("Connecting to WS:", wsUrl);
-            const ws = new WebSocket(wsUrl);
+            console.log("Connecting to WS:", wsUrl, "focus=", document.hasFocus(), "visibility=", document.visibilityState);
+
+            if (ws) {
+                if (ws.readyState === WebSocket.OPEN) return;
+                if (ws.readyState === WebSocket.CONNECTING) {
+                    const ageMs = wsConnectingAtMs ? (performance.now() - wsConnectingAtMs) : 0;
+                    if (ageMs < 4000) return;
+                    try { ws.close(); } catch (_) { }
+                    ws = null;
+                }
+            }
+
+            const attemptId = ++wsAttempt;
+            const currentWs = new WebSocket(wsUrl);
+            ws = currentWs;
+            wsConnectingAtMs = performance.now();
+            if (wsConnectTimeoutId) clearTimeout(wsConnectTimeoutId);
+            wsConnectTimeoutId = setTimeout(() => {
+                if (ws !== currentWs) return;
+                if (currentWs.readyState !== WebSocket.CONNECTING) return;
+                console.warn("WS connect timeout, retrying", { attemptId });
+                try { currentWs.close(); } catch (_) { }
+                ws = null;
+                wsConnectTimeoutId = null;
+                connectWebSocket();
+            }, 4000);
+            candidateQueue = [];
 
             ws.onopen = () => {
+                if (ws !== currentWs) return;
+                if (wsConnectTimeoutId) { clearTimeout(wsConnectTimeoutId); wsConnectTimeoutId = null; }
                 console.log("WS Connected, registering as viewer");
                 ws.send(JSON.stringify({ type: "register", role: "viewer" }));
                 // Give it a moment to register, then start negotiation
                 setTimeout(initiateOffer, 500);
             };
 
+            ws.onerror = (event) => {
+                if (ws !== currentWs) return;
+                console.error("WS Error:", event, "readyState=", ws ? ws.readyState : null);
+            };
+
+            ws.onclose = (event) => {
+                if (ws !== currentWs) return;
+                if (wsConnectTimeoutId) { clearTimeout(wsConnectTimeoutId); wsConnectTimeoutId = null; }
+                console.warn("WS Closed:", { code: event.code, reason: event.reason, wasClean: event.wasClean });
+                ws = null;
+            };
+
             ws.onmessage = async (event) => {
+                if (ws !== currentWs) return;
                 const msg = JSON.parse(event.data);
                 console.log("WS Message:", msg.type);
 
                 if (msg.type === "answer") {
-                    await pc.setRemoteDescription(msg);
+                    await pc.setRemoteDescription({ type: "answer", sdp: msg.sdp });
+                    while (candidateQueue.length > 0) {
+                        const candidate = candidateQueue.shift();
+                        try {
+                            await pc.addIceCandidate(candidate);
+                        } catch (e) {
+                            console.error("Error adding queued candidate", e);
+                        }
+                    }
                 } else if (msg.type === "candidate") {
                     if (msg.candidate) {
+                        if (!pc.remoteDescription) {
+                            candidateQueue.push(msg.candidate);
+                            return;
+                        }
                         try {
                             await pc.addIceCandidate(msg.candidate);
                         } catch (e) {
@@ -137,7 +195,7 @@
             };
 
             pc.onicecandidate = (event) => {
-                if (event.candidate) {
+                if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({
                         type: "candidate",
                         candidate: event.candidate
@@ -188,31 +246,52 @@
                 }
             });
 
-            try {
-                const xr = await scene.createDefaultXRExperienceAsync({
-                    uiOptions: {
-                        sessionMode: "immersive-ar",
-                    }
-                });
-                if (!ENABLE_HAND_TRACKING) {
-                    const fm = xr.baseExperience.featuresManager;
-                    fm.disableFeature(BABYLON.WebXRFeatureName.HAND_TRACKING);
+            if (navigator.xr && window.isSecureContext) {
+                let arSupported = false;
+                try {
+                    arSupported = await navigator.xr.isSessionSupported('immersive-ar');
+                } catch (e) {
+                    arSupported = false;
                 }
-                console.log("AR initialized");
-            } catch (e) {
-                console.error("AR not supported:", e);
+
+                if (arSupported) {
+                    try {
+                        const xr = await scene.createDefaultXRExperienceAsync({
+                            uiOptions: {
+                                sessionMode: "immersive-ar",
+                            }
+                        });
+                        if (!ENABLE_HAND_TRACKING && xr && xr.baseExperience && xr.baseExperience.featuresManager) {
+                            const fm = xr.baseExperience.featuresManager;
+                            fm.disableFeature(BABYLON.WebXRFeatureName.HAND_TRACKING);
+                        }
+                        console.log("AR initialized");
+                    } catch (e) {
+                        console.log("AR init skipped");
+                    }
+                } else {
+                    console.log("WebXR immersive-ar not supported, skipping AR init");
+                }
+            } else {
+                console.log("WebXR unavailable or insecure context, skipping AR init");
             }
 
             return scene;
         };
 
-        document.getElementById('startBtn').addEventListener('click', async () => {
-            document.getElementById('startBtn').style.display = 'none';
+        const startBtn = document.getElementById('startBtn');
+        let startRequested = false;
+
+        const start = async () => {
+            if (startRequested) return;
+            startRequested = true;
+            console.log("Start requested", "focus=", document.hasFocus(), "visibility=", document.visibilityState);
+            startBtn.style.display = 'none';
             createPeerConnection();
             pc.addTransceiver('video', { direction: 'recvonly' });
 
             if (SIGNALING_MODE === 'ws') {
-                startWebSocket();
+                connectWebSocket();
                 const scene = await createScene();
                 engine.runRenderLoop(() => scene.render());
             } else {
@@ -221,7 +300,36 @@
                 const scene = await createScene();
                 engine.runRenderLoop(() => scene.render());
             }
+        };
+
+        startBtn.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
+            console.log("Start button pointerdown");
+            start();
+        }, { passive: false });
+
+        startBtn.addEventListener('touchstart', (event) => {
+            event.preventDefault();
+            console.log("Start button touchstart");
+            start();
+        }, { passive: false });
+
+        startBtn.addEventListener('click', () => start());
+
+        const ensureWsConnected = (reason) => {
+            if (!startRequested) return;
+            if (SIGNALING_MODE !== 'ws') return;
+            if (!ws || ws.readyState === WebSocket.CLOSED) {
+                console.log("Ensuring WS connected:", reason, "focus=", document.hasFocus(), "visibility=", document.visibilityState);
+                connectWebSocket();
+            }
+        };
+
+        window.addEventListener('focus', () => ensureWsConnected('focus'));
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') ensureWsConnected('visibilitychange');
         });
+        window.addEventListener('pointerdown', () => ensureWsConnected('pointerdown'), { once: true });
 
         window.addEventListener("resize", () => engine.resize());
     </script>

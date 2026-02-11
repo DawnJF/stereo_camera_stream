@@ -26,7 +26,7 @@ logger = logging.getLogger("gst-webrtc")
 
 
 class WebRTCClient:
-    def __init__(self, ws, loop, width=1920, height=1080, framerate=30):
+    def __init__(self, ws, loop, width=640, height=480, framerate=30):
         self.ws = ws
         self.loop = loop  # asyncio loop
         self.width = width
@@ -38,23 +38,181 @@ class WebRTCClient:
         self._h264_pt = None
         # Pipeline will be constructed in start_pipeline
 
+    def _get_v4l2_device(self) -> str:
+        return os.environ.get("GST_WEBRTC_V4L2_DEVICE", "/dev/video0")
+
+    def _probe_v4l2_src_caps(self, device: str):
+        try:
+            src = Gst.ElementFactory.make("v4l2src")
+            if not src:
+                return None
+            src.set_property("device", device)
+            src.set_property("do-timestamp", True)
+            src.set_state(Gst.State.READY)
+            pad = src.get_static_pad("src")
+            if not pad:
+                src.set_state(Gst.State.NULL)
+                return None
+            caps = pad.query_caps(None)
+            src.set_state(Gst.State.NULL)
+            return caps
+        except Exception:
+            return None
+
+    def _caps_supports(self, available_caps, required_caps_str: str) -> bool:
+        try:
+            required = Gst.Caps.from_string(required_caps_str)
+            if not required:
+                return False
+            intersection = available_caps.intersect(required)
+            return bool(intersection) and not intersection.is_empty()
+        except Exception:
+            return False
+
     def start_pipeline(self):
         try:
-            # Create pipeline video part as requested
-            # Use v4l2src for camera
-            pipeline_str = (
-                "webrtcbin name=sendrecv bundle-policy=max-bundle "
-                f"v4l2src device=/dev/video0 do-timestamp=true ! "
-                f"video/x-raw,width={self.width},height={self.height},framerate={self.framerate}/1 ! "
-                "videoconvert ! video/x-raw,format=I420 ! "
-                f"x264enc tune=zerolatency speed-preset=ultrafast bitrate=2000 bframes=0 key-int-max={self.framerate} ! "
+            device = self._get_v4l2_device()
+            available_caps = self._probe_v4l2_src_caps(device)
+
+            mjpg_exact = f"image/jpeg,width={self.width},height={self.height},framerate={self.framerate}/1"
+            raw_exact = f"video/x-raw,width={self.width},height={self.height},framerate={self.framerate}/1"
+            h264_exact = f"video/x-h264,width={self.width},height={self.height},framerate={self.framerate}/1"
+
+            mjpg_caps = (
+                mjpg_exact
+                if available_caps and self._caps_supports(available_caps, mjpg_exact)
+                else "image/jpeg"
+            )
+            raw_caps = (
+                raw_exact
+                if available_caps and self._caps_supports(available_caps, raw_exact)
+                else "video/x-raw"
+            )
+
+            has_h264_exact = bool(
+                available_caps and self._caps_supports(available_caps, h264_exact)
+            )
+            supports_raw_any = bool(
+                available_caps and self._caps_supports(available_caps, "video/x-raw")
+            )
+            supports_mjpg_any = bool(
+                available_caps and self._caps_supports(available_caps, "image/jpeg")
+            )
+
+            preferred = os.environ.get("GST_WEBRTC_SOURCE_MODE", "raw").strip().lower()
+            logger.info(f"[Pipeline Selection] Preferred mode: '{preferred}'")
+            logger.info(
+                f"[Pipeline Selection] Caps Support - H264: {has_h264_exact}, RAW: {supports_raw_any}, MJPG: {supports_mjpg_any}"
+            )
+
+            if preferred not in {"auto", "raw", "mjpg", "jpeg", "h264"}:
+                preferred = "auto"
+
+            video_out_caps = f"video/x-raw,format=I420,width={self.width},height={self.height},framerate={self.framerate}/1"
+
+            h264_encode_chain = (
+                "videoconvert ! videoscale ! videorate ! "
+                f"{video_out_caps} ! "
+                f"x264enc tune=zerolatency speed-preset=ultrafast bitrate=5000 bframes=0 key-int-max={self.framerate} ! "
                 "h264parse ! video/x-h264,profile=constrained-baseline,stream-format=byte-stream,alignment=au ! "
                 "rtph264pay name=pay0 config-interval=1 ! "
                 "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000 ! "
                 "queue ! sendrecv."
             )
 
-            self.pipeline = Gst.parse_launch(pipeline_str)
+            pipeline_candidates = []
+
+            if (preferred in {"auto", "h264"}) and has_h264_exact:
+                logger.info("[Pipeline Selection] Adding H264 candidate")
+                pipeline_candidates.append(
+                    (
+                        "h264",
+                        "webrtcbin name=sendrecv bundle-policy=max-bundle "
+                        f"v4l2src device={device} do-timestamp=true ! "
+                        f"{h264_exact} ! "
+                        "h264parse ! video/x-h264,stream-format=byte-stream,alignment=au ! "
+                        "rtph264pay name=pay0 config-interval=1 ! "
+                        "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000 ! "
+                        "queue ! sendrecv.",
+                    )
+                )
+
+            def add_raw():
+                logger.info("[Pipeline Selection] Adding RAW candidate")
+                pipeline_candidates.append(
+                    (
+                        "raw",
+                        "webrtcbin name=sendrecv bundle-policy=max-bundle "
+                        f"v4l2src device={device} do-timestamp=true ! "
+                        f"{raw_caps} ! "
+                        f"{h264_encode_chain}",
+                    )
+                )
+
+            def add_mjpg():
+                logger.info("[Pipeline Selection] Adding MJPG candidate")
+                pipeline_candidates.append(
+                    (
+                        "mjpg",
+                        "webrtcbin name=sendrecv bundle-policy=max-bundle "
+                        f"v4l2src device={device} do-timestamp=true ! "
+                        f"{mjpg_caps} ! "
+                        f"jpegdec ! {h264_encode_chain}",
+                    )
+                )
+
+            if preferred in {"mjpg", "jpeg"}:
+                logger.info("[Pipeline Selection] Branch: MJPG/JPEG preferred")
+                if supports_mjpg_any or not available_caps:
+                    add_mjpg()
+                if supports_raw_any or not available_caps:
+                    add_raw()
+            elif preferred == "raw":
+                logger.info("[Pipeline Selection] Branch: RAW preferred")
+                if supports_raw_any or not available_caps:
+                    add_raw()
+                if supports_mjpg_any or not available_caps:
+                    add_mjpg()
+            else:
+                logger.info("[Pipeline Selection] Branch: Auto/Default fallback")
+                if available_caps and supports_mjpg_any and not supports_raw_any:
+                    add_mjpg()
+                elif available_caps and supports_raw_any and not supports_mjpg_any:
+                    add_raw()
+                else:
+                    if supports_raw_any or not available_caps:
+                        add_raw()
+                    if supports_mjpg_any or not available_caps:
+                        add_mjpg()
+
+            raw_candidate_index = next(
+                (i for i, (mode, _) in enumerate(pipeline_candidates) if mode == "raw"),
+                None,
+            )
+            if raw_candidate_index not in (None, 0):
+                pipeline_candidates.insert(
+                    0, pipeline_candidates.pop(raw_candidate_index)
+                )
+
+            if not pipeline_candidates:
+                logger.error("No pipeline candidates available")
+                return False
+
+            pipeline_str = None
+            for mode, candidate in pipeline_candidates:
+                try:
+                    self.pipeline = Gst.parse_launch(candidate)
+                    pipeline_str = candidate
+                    logger.info("Pipeline created using source mode: %s", mode)
+                    break
+                except Exception as e:
+                    logger.warning("Failed to build pipeline (%s): %s", mode, e)
+                    self.pipeline = None
+                    continue
+
+            if not self.pipeline or not pipeline_str:
+                logger.error("Failed to build any pipeline")
+                return False
 
             self.webrtc = self.pipeline.get_by_name("sendrecv")
             if not self.webrtc:
