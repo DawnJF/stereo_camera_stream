@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Video Stream Test (No AR)</title>
+    <style>
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        #video {
+            max-width: 100%;
+            max-height: 100%;
+            background-color: #222;
+        }
+        #status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 5px;
+            background: rgba(0, 0, 0, 0.5);
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="status">Status: Connecting...</div>
+    <video id="video" autoplay playsinline muted controls></video>
+
+    <script>
+        const video = document.getElementById('video');
+        const statusDiv = document.getElementById('status');
+        let pc = null;
+        let ws = null;
+        let candidateQueue = [];
+
+        function updateStatus(text) {
+            statusDiv.textContent = 'Status: ' + text;
+            console.log(text);
+        }
+
+        const USE_GOOGLE_STUN = (new URLSearchParams(window.location.search).get('useStun') === 'true');
+
+        function createPeerConnection() {
+            candidateQueue = [];
+            const iceServers = USE_GOOGLE_STUN ? [{ urls: ['stun:stun.l.google.com:19302'] }] : [];
+            const config = {
+                sdpSemantics: 'unified-plan',
+                iceServers: iceServers
+            };
+            console.log('PeerConnection iceServers:', iceServers.length ? 'Google STUN enabled' : 'LAN-only (no STUN)');
+            
+            pc = new RTCPeerConnection(config);
+
+            // Add transceiver to ensure we receive video
+            pc.addTransceiver('video', {direction: 'recvonly'});
+            
+            pc.ontrack = function(evt) {
+                if (evt.track.kind == 'video') {
+                    console.log('Got video track');
+                    video.srcObject = new MediaStream([evt.track]);
+                    video.play().catch(e => console.error("Play error:", e));
+                }
+            };
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: "candidate",
+                        candidate: event.candidate
+                    }));
+                }
+            };
+            
+            pc.onconnectionstatechange = () => {
+                updateStatus('PC State: ' + pc.connectionState);
+            };
+        }
+
+        async function start() {
+            createPeerConnection();
+            
+            const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+            const wsUrl = `${protocol}://${window.location.host}/ws`;
+            updateStatus('Connecting to WS: ' + wsUrl);
+            
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                updateStatus('WS Connected');
+                ws.send(JSON.stringify({ type: "register", role: "viewer" }));
+                // Start negotiation after a short delay
+                setTimeout(initiateOffer, 500);
+            };
+
+            ws.onmessage = async (event) => {
+                const msg = JSON.parse(event.data);
+                
+                if (msg.type === "answer") {
+                    updateStatus('Received Answer');
+                    await pc.setRemoteDescription(msg);
+                    
+                    // Process queued candidates
+                    while (candidateQueue.length > 0) {
+                        const candidate = candidateQueue.shift();
+                        try {
+                            await pc.addIceCandidate(candidate);
+                            console.log('Added queued candidate');
+                        } catch (e) {
+                            console.error("Error adding queued candidate", e);
+                        }
+                    }
+                } else if (msg.type === "candidate") {
+                    if (msg.candidate) {
+                        if (!pc.remoteDescription) {
+                            // Queue candidate if remote description is not set yet
+                            console.log('Queueing candidate until remote description is set');
+                            candidateQueue.push(msg.candidate);
+                        } else {
+                            try {
+                                await pc.addIceCandidate(msg.candidate);
+                                console.log('Added remote candidate');
+                            } catch (e) {
+                                console.error("Error adding candidate", e);
+                            }
+                        }
+                    }
+                }
+            };
+            
+            ws.onclose = () => {
+                updateStatus('WS Closed');
+            };
+        }
+
+        async function initiateOffer() {
+            updateStatus('Creating Offer...');
+            try {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                ws.send(JSON.stringify({
+                    type: "offer",
+                    sdp: pc.localDescription.sdp
+                }));
+                updateStatus('Offer Sent');
+            } catch (e) {
+                console.error("Error creating offer:", e);
+                updateStatus('Error: ' + e.message);
+            }
+        }
+
+        // Start automatically
+        start();
+    </script>
+</body>
+</html>
