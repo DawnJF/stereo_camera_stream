@@ -9,6 +9,13 @@ pip3 install aiohttp
 gst-inspect-1.0 nice
 gst-inspect-1.0 webrtcbin
 
+gst-inspect-1.0 v4l2src
+gst-inspect-1.0 videoconvert videoscale videorate queue
+gst-inspect-1.0 x264enc
+gst-inspect-1.0 h264parse rtph264pay
+gst-inspect-1.0 jpegdec
+
+
 测试方法 
 gst-launch-1.0 v4l2src device=/dev/video0 ! video/x-raw,format=YUY2,width=640,height=480,framerate=30/1 ! videoconvert
 

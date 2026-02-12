@@ -26,7 +26,7 @@ logger = logging.getLogger("gst-webrtc")
 
 
 class WebRTCClient:
-    def __init__(self, ws, loop, width=640, height=480, framerate=30):
+    def __init__(self, ws, loop, width=1920, height=1080, framerate=60):
         self.ws = ws
         self.loop = loop  # asyncio loop
         self.width = width
