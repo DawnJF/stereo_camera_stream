@@ -1,6 +1,6 @@
 const APP_ID = "5e881fdc469a4db1b05357c5665d2279";
 const CHANNEL = "123";
-const TOKEN = "007eJxTYJDZsMllXplRsevWs5+Psvw+J7+jTP73XaabqznrDYt2PNNQYDBNtbAwTEtJNjGzTDRJSTJMMjA1NjVPNjUzM00xMjK3TDGqyGwIZGQwul7EysgAgSA+M4OhkTEDAwBZtR5p";
+const TOKEN = "007eJxTYNjsISQupMHHK8Z6LKDJepna2unL9pnyxCiWnjY6MU1j4gcFBtNUCwvDtJRkEzPLRJOUJMMkA1NjU/NkUzMz0xQjI3PL09G7MxsCGRk+6KxlZmSAQBCfmcHQyJiBAQDuDxsY";
 const UID = null;
 const PROXY_MODE = 0;
 
@@ -60,9 +60,9 @@ function appendLog(text) {
 }
 
 function clearRemote() {
-  const remoteContainer = document.getElementById("remote-video");
-  if (remoteContainer) {
-    remoteContainer.replaceChildren();
+  const remoteVideoElement = document.getElementById("remote-video");
+  if (remoteVideoElement) {
+    remoteVideoElement.srcObject = null;
   }
   playingRemoteUid = null;
 }
@@ -79,14 +79,9 @@ async function subscribeAndPlayRemote(user, mediaType) {
   appendLog(`订阅成功：uid=${user.uid} mediaType=${mediaType}`);
 
   if (mediaType === "video") {
-    const remoteContainerId = "remote-video";
-    const remoteContainer = document.getElementById(remoteContainerId);
-    if (!remoteContainer) {
+    const remoteVideoElement = document.getElementById("remote-video");
+    if (!remoteVideoElement) {
       return;
-    }
-
-    if (playingRemoteUid !== null && playingRemoteUid !== user.uid) {
-      remoteContainer.replaceChildren();
     }
 
     playingRemoteUid = user.uid;
@@ -94,7 +89,11 @@ async function subscribeAndPlayRemote(user, mediaType) {
       appendLog(`订阅后 videoTrack 为空：uid=${user.uid}`);
       return;
     }
-    user.videoTrack.play(remoteContainerId);
+
+    const mediaStreamTrack = user.videoTrack.getMediaStreamTrack();
+    const mediaStream = new MediaStream([mediaStreamTrack]);
+    remoteVideoElement.srcObject = mediaStream;
+    remoteVideoElement.play().catch(e => appendLog(`视频播放失败：${e}`));
     setStatus(`已接收远端视频：uid ${user.uid}`);
     appendLog(`开始播放远端视频：uid=${user.uid}`);
   }
